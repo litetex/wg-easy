@@ -12,8 +12,7 @@ on:
 jobs:
   container-image-build-push:
     name: Build and Push container Image
-    permissions:
-      packages: write
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
