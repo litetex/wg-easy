@@ -14,34 +14,24 @@ RUN pnpm install
 COPY src ./
 RUN pnpm build
 
+RUN chmod +x /app/cli/cli.sh
+
+
+FROM alpine:3 AS build-amneziawg-tools
+
+WORKDIR /app
+
 # Build amneziawg-tools
-RUN apk add linux-headers build-base git && \
-    git clone https://github.com/amnezia-vpn/amneziawg-tools.git && \
-    cd amneziawg-tools/src && \
-    make
+RUN apk add --no-cache linux-headers build-base git \
+    && git clone https://github.com/amnezia-vpn/amneziawg-tools.git \
+    && cd amneziawg-tools/src \
+    && make \
+    && chmod +x /app/amneziawg-tools/src/wg /app/amneziawg-tools/src/wg-quick/linux.bash
+
 
 # Copy build result to a new image.
 # This saves a lot of disk space.
 FROM docker.io/library/node:lts-alpine
-WORKDIR /app
-
-HEALTHCHECK --interval=1m --timeout=5s --retries=3 CMD /usr/bin/timeout 5s /bin/sh -c "/usr/bin/wg show | /bin/grep -q interface || exit 1"
-
-# Copy build
-COPY --from=build /app/.output /app
-# Copy migrations
-COPY --from=build /app/server/database/migrations /app/server/database/migrations
-# libsql (https://github.com/nitrojs/nitro/issues/3328)
-RUN cd /app/server && \
-    npm install --no-save libsql && \
-    npm cache clean --force
-# cli
-COPY --from=build /app/cli/cli.sh /usr/local/bin/cli
-RUN chmod +x /usr/local/bin/cli
-# Copy amneziawg-tools
-COPY --from=build /app/amneziawg-tools/src/wg /usr/bin/awg
-COPY --from=build /app/amneziawg-tools/src/wg-quick/linux.bash /usr/bin/awg-quick
-RUN chmod +x /usr/bin/awg /usr/bin/awg-quick
 
 # Install Linux packages
 RUN apk add --no-cache \
@@ -53,6 +43,23 @@ RUN apk add --no-cache \
     kmod \
     iptables-legacy \
     wireguard-tools
+
+WORKDIR /app/server
+# libsql (https://github.com/nitrojs/nitro/issues/3328)
+RUN npm install --no-save libsql \
+    && npm cache clean --force
+
+WORKDIR /app
+
+# Copy build
+COPY --from=build /app/.output /app
+# Copy migrations
+COPY --from=build /app/server/database/migrations /app/server/database/migrations
+# cli
+COPY --from=build /app/cli/cli.sh /usr/local/bin/cli
+# Copy amneziawg-tools
+COPY --from=build-amneziawg-tools /app/amneziawg-tools/src/wg /usr/bin/awg
+COPY --from=build-amneziawg-tools /app/amneziawg-tools/src/wg-quick/linux.bash /usr/bin/awg-quick
 
 RUN mkdir -p /etc/amnezia
 RUN ln -s /etc/wireguard /etc/amnezia/amneziawg
@@ -70,6 +77,8 @@ ENV INIT_ENABLED=false
 ENV DISABLE_IPV6=false
 
 LABEL org.opencontainers.image.source=https://github.com/wg-easy/wg-easy
+
+HEALTHCHECK --interval=1m --timeout=5s --retries=3 CMD /usr/bin/timeout 5s /bin/sh -c "/usr/bin/wg show | /bin/grep -q interface || exit 1"
 
 # Run Web UI
 CMD ["/usr/bin/dumb-init", "node", "server/index.mjs"]
